@@ -1,0 +1,43 @@
+name: Manual First Run - Fetch Historical Data
+
+on:
+  # 允许你从 Actions 页面手动触发
+  workflow_dispatch:
+
+jobs:
+  first-run-job:
+    name: Fetch Last 365 Days of Papers
+    runs-on: ubuntu-latest
+    # 首次运行可能时间较长，增加超时时间
+    timeout-minutes: 60 
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 关键步骤：设置 RUN_MODE 为 first_run
+      - name: Run Python script for the first time
+        env:
+          RUN_MODE: first_run
+        run: python daily_arxiv.py
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md daily.json
+          # 如果没有变动则不报错
+          git commit -m "Initial data fetch for the last year" || echo "No changes to commit"
+          git push
