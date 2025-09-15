@@ -36,7 +36,7 @@ def get_papers_with_code(date_str, cats):
                 for paper in papers:
                     if paper["id"] not in output:
                         output[paper["id"]] = paper
-            time.sleep(5)  # 礼貌性等待
+            time.sleep(2)  # 礼貌性等待
         except Exception as e:
             print(f"Error scraping {cat_group} for date {date_str}: {e}")
 
