@@ -45,6 +45,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           KEYWORDS: ${{ secrets.KEYWORDS }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }} # <--- 添加这一行
         run: python daily_arxiv.py
 
       # 修正 2：使用简单的 run 命令和 shell 脚本来提交和推送，而不是有问题的 github-script
