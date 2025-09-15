@@ -7,196 +7,156 @@ from datetime import timedelta
 import os
 import pathlib
 
+# =====================================================================================
+# 1. 配置区域 - 在这里添加你所有感兴趣的分类
+# =====================================================================================
+CATEGORIES = {
+    "cs": ["cs.AI", "cs.NI", "cs.SY", "cs.IT"],
+    "eess": ["eess.SP"]
+}
 
-def get_daily_code(DateToday,cats):
+# =====================================================================================
+# 2. 核心函数
+# =====================================================================================
+def get_papers_with_code(date_str, cats):
     """
-    @param DateToday: str
-    @param cats: dict
-    @return paper_with_code: dict
+    抓取指定日期的论文并查找其代码库。
+    @param date_str: 'YYYY-MM-DD' 格式的日期字符串
+    @param cats: 分类字典
+    @return: 一个字典，包含当天找到的带代码的论文
     """
-    from_day = until_day = DateToday
-    content = dict()
-    # content
-    output = dict()
-    for k,v in cats.items():
-        scraper = arxivscraper.Scraper(category=k, date_from=from_day,date_until=until_day,filters={'categories':v})
-        tmp = scraper.scrape()
-        print(tmp)
-        if isinstance(tmp,list):
-            for item in tmp:
-                if item["id"] not in output:
-                    output[item["id"]] = item
-        time.sleep(30)
-
-    base_url = "https://arxiv.paperswithcode.com/api/v0/papers/"
-    cnt = 0
-
-    for k,v in output.items():
-        print(v["id"])
-        _id = v["id"]
-        paper_title = " ".join(v["title"].split())
-        paper_url = v["url"]
-        paper_date = v.get("published", DateToday)
-        if isinstance(paper_date, datetime.datetime):
-            paper_date = paper_date.strftime("%Y-%m-%d")
-        url = base_url + _id
+    output = {}
+    
+    # 步骤 1: 从 arXiv 抓取论文元数据
+    for cat_group, sub_cats in cats.items():
         try:
-            r = requests.get(url).json()
-            if "official" in r and r["official"]:
-                cnt += 1
-                repo_url = r["official"]["url"]
-                repo_name = repo_url.split("/")[-1]
-
-                content[_id] = f"|[{paper_title}]({paper_url})|[{repo_name}]({repo_url})|\n"
+            scraper = arxivscraper.Scraper(category=cat_group, date_from=date_str, date_until=date_str, filters={'categories': sub_cats})
+            papers = scraper.scrape()
+            if isinstance(papers, list):
+                for paper in papers:
+                    if paper["id"] not in output:
+                        output[paper["id"]] = paper
+            time.sleep(5)  # 礼貌性等待
         except Exception as e:
-            print(f"exception: {e} with id: {_id}")
-    data = {DateToday:content}
-    return data
+            print(f"Error scraping {cat_group} for date {date_str}: {e}")
 
-def update_daily_json(filename,data_all):
-    with open(filename,"r") as f:
-        content = f.read()
-        if not content:
-            m = {}
-        else:
-            m = json.loads(content)
+    # 步骤 2: 从 paperswithcode.com 查找代码链接
+    content = {}
+    base_url = "https://arxiv.paperswithcode.com/api/v0/papers/"
     
-    #将datas更新到m中
-    for data in data_all:
-        m.update(data)
-
-    # save data to daily.json
-
-    with open(filename,"w") as f:
-        json.dump(m,f)
-    
-
-
-
-def ensure_archive_dirs():
-    """Create archive directory structure if it doesn't exist"""
-    archive_base = "archives"
-    current_year = datetime.date.today().year
-    
-    # Create base archives dir
-    pathlib.Path(archive_base).mkdir(exist_ok=True)
-    
-    # Create directories for all years from 2021 to current year
-    for year in range(2021, current_year + 1):
-        year_dir = os.path.join(archive_base, str(year))
-        pathlib.Path(year_dir).mkdir(exist_ok=True)
+    for paper_id, paper_meta in output.items():
+        paper_title = " ".join(paper_meta["title"].split())
+        paper_url = paper_meta["url"]
         
-        # Create month directories if they don't exist
-        for month in range(1, 13):
-            month_file = os.path.join(year_dir, f"{month:02d}.md")
-            if not os.path.exists(month_file):
-                with open(month_file, "w") as f:
-                    f.write(f"# {datetime.date(year, month, 1).strftime('%B %Y')} Archive\n\n")
-
-def json_to_md(filename):
-    """
-    Convert JSON data to markdown files with archives
-    @param filename: str
-    @return None
-    """
-    with open(filename, "r") as f:
-        content = f.read()
-        if not content:
-            data = {}
-        else:
-            data = json.loads(content)
-    
-    # Ensure archive structure exists
-    ensure_archive_dirs()
-    
-    # Group entries by year and month
-    entries_by_month = {}
-    latest_entries = []
-    today = datetime.date.today()
-    week_ago = today - timedelta(days=7)
-    
-    for day in sorted(data.keys(), reverse=True):
-        day_date = datetime.datetime.strptime(day, "%Y-%m-%d").date()
-        year_month = day_date.strftime("%Y/%m")
-        
-        # Collect entries for archives
-        if day_date > week_ago:
-            latest_entries.append((day, data[day]))
+        url = base_url + paper_id
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()  # 检查请求是否成功
+            r_json = response.json()
+            if r_json.get("official") and r_json["official"].get("url"):
+                repo_url = r_json["official"]["url"]
+                repo_name = repo_url.split("/")[-1]
+                content[paper_id] = f"[{paper_title}]({paper_url})|[{repo_name}]({repo_url})|\n"
+        except requests.exceptions.RequestException:
+            # 大多数论文没有代码是正常的，所以静默处理
+            pass
+        except json.JSONDecodeError:
+            print(f"Warning: Could not decode JSON for paper ID: {paper_id}")
             
-        if year_month not in entries_by_month:
-            entries_by_month[year_month] = []
-        entries_by_month[year_month].append((day, data[day]))
-    
-    # Update main README.md
-    with open("README.md", "w") as f:
-        # Write header and overview
-        f.write("# Daily ArXiv\n\n")
-        f.write("A curated collection of arXiv papers with open-source implementations, specifically focusing on Signal Processing (eess.SP) ")
-        f.write("and Information Theory (cs.IT) categories. This repository is designed to serve researchers and practitioners in information ")
-        f.write("and communication systems by providing easy access to papers that come with their source code implementations.\n\n")
-        
-        f.write("## Overview\n")
-        f.write("This project automatically tracks and analyzes papers from eess.SP (Electrical Engineering and Systems Science - Signal Processing) ")
-        f.write("and cs.IT (Computer Science - Information Theory) categories on arXiv daily using GitHub Actions. It specifically identifies ")
-        f.write("and catalogs papers that have released their source code, making it easier for researchers in information and communication ")
-        f.write("systems to find implementable research work.\n\n")
-        
-        f.write("The main features include:\n")
-        f.write("- Daily updates of papers with open-source implementations\n")
-        f.write("- Focus on signal processing and information theory research\n")
-        f.write("- Automatic tracking and organization\n\n")
-        
-        # Write latest updates
-        f.write("## Latest Updates \n")
-        yymm = f"{str(today.year)[2:]}{today.month:02d}"
-        f.write("|date|paper|code|\n" + "|---|---|---|\n")
-        for day, day_content in latest_entries:
-            if not day_content:
-                continue
-            for k, v in day_content.items():
-                if k.startswith(yymm):
-                    f.write(f"|{k}{v}")
-        f.write("\n")
-        
-        # Write archive links
-        f.write("\n## Archives\n")
-        for year_month in sorted(entries_by_month.keys(), reverse=True):
-            year, month = year_month.split("/")
-            month_name = datetime.date(int(year), int(month), 1).strftime("%B")
-            f.write(f"- [{month_name} {year}](archives/{year}/{int(month):02d}.md)\n")
-    
-    # Update archive files
-    for year_month, entries in entries_by_month.items():
-        year, month = year_month.split("/")
-        archive_file = f"archives/{year}/{int(month):02d}.md"
-        yymm = f"{year[2:]}{month}"
-        with open(archive_file, "w") as f:
-            f.write(f"# {datetime.date(int(year), int(month), 1).strftime('%B %Y')} Archive\n\n")
-            f.write("[Back to README](../../README.md)\n\n")
-            f.write("|date|paper|code|\n" + "|---|---|---|\n")
-            for day, day_content in entries:
-                if not day_content:
-                    continue
-                for k, v in day_content.items():
-                    if k.startswith(yymm):
-                        f.write(f"|{k}{v}")
-            f.write("\n")
-    
-    print("Finished generating markdown files")
+    return {date_str: content}
 
+def update_json_file(filename, new_data):
+    """
+    读取现有的 JSON 文件，合并新数据，然后写回。
+    """
+    try:
+        with open(filename, "r", encoding='utf-8') as f:
+            content = f.read()
+            if not content:
+                existing_data = {}
+            else:
+                existing_data = json.loads(content)
+    except FileNotFoundError:
+        existing_data = {}
+
+    existing_data.update(new_data)
+    
+    with open(filename, "w", encoding='utf-8') as f:
+        json.dump(existing_data, f, indent=4)
+
+def json_to_md(filename, days_in_readme=30):
+    """
+    从 JSON 文件生成 README.md。
+    @param filename: JSON 文件路径
+    @param days_in_readme: 在 README 主页上显示最近多少天的数据
+    """
+    try:
+        with open(filename, "r", encoding='utf-8') as f:
+            data = json.loads(f.read())
+    except (FileNotFoundError, json.JSONDecodeError):
+        print(f"Warning: {filename} not found or is empty. Cannot generate markdown.")
+        return
+
+    # 按日期降序排序
+    sorted_days = sorted(data.keys(), reverse=True)
+    
+    with open("README.md", "w", encoding='utf-8') as f:
+        f.write("# Daily ArXiv Papers with Code\n\n")
+        f.write(f"A curated list of arXiv papers with open-source implementations, focusing on the following categories: **{', '.join([item for sublist in CATEGORIES.values() for item in sublist])}**. Updated daily.\n\n")
+        
+        f.write(f"## Latest Updates (Last {days_in_readme} Days)\n")
+        f.write("| Date | Paper Title | Code Repository |\n")
+        f.write("|---|---|---|\n")
+
+        found_papers_count = 0
+        for day in sorted_days[:days_in_readme]:
+            if data[day]:
+                for paper_id, content_str in data[day].items():
+                    f.write(f"| {day} | {content_str}")
+                    found_papers_count += 1
+        
+        if found_papers_count == 0:
+            f.write(f"| | No new papers with code found in the last {days_in_readme} days. | |\n")
+
+    print("Finished generating README.md")
+
+# =====================================================================================
+# 3. 主程序逻辑
+# =====================================================================================
 if __name__ == "__main__":
+    
+    run_mode = os.getenv("RUN_MODE", "daily_run")  # 默认为日常运行
+    json_filename = "daily.json"
 
-    DateToday = datetime.date.today()
-    N = 7
-    data_all = []
-    for i in range(1,N):
-        day = str(DateToday + timedelta(-i))
-        # you can add the categories in cats
-        cats = {
-        "eess":["eess.SP"],
-        "cs":["cs.IT"]
-    }
-        data = get_daily_code(day,cats)
-        data_all.append(data)
-    update_daily_json("daily.json",data_all)
-    json_to_md("daily.json")
+    if run_mode == "first_run":
+        print("--- Running in 'first_run' mode: fetching data for the last 365 days. ---")
+        today = datetime.date.today()
+        all_data = {}
+        for i in range(365): # 爬取过去一年的数据
+            day_to_fetch = str(today - timedelta(days=i))
+            print(f"Fetching papers for {day_to_fetch}...")
+            daily_data = get_papers_with_code(day_to_fetch, CATEGORIES)
+            all_data.update(daily_data)
+        
+        # 首次运行时，直接覆盖写入
+        with open(json_filename, "w", encoding='utf-8') as f:
+            json.dump(all_data, f, indent=4)
+        print(f"Successfully created {json_filename} with historical data.")
+
+    elif run_mode == "daily_run":
+        print("--- Running in 'daily_run' mode: fetching data for yesterday. ---")
+        yesterday = str(datetime.date.today() - timedelta(days=1))
+        
+        print(f"Fetching papers for {yesterday}...")
+        new_data = get_papers_with_code(yesterday, CATEGORIES)
+        
+        # 更新 JSON 文件
+        update_json_file(json_filename, new_data)
+        print(f"Successfully updated {json_filename} with data from {yesterday}.")
+
+    else:
+        print(f"Error: Unknown RUN_MODE '{run_mode}'. Exiting.")
+        exit(1)
+        
+    # 无论哪种模式，都重新生成 Markdown
+    json_to_md(json_filename, days_in_readme=30)
