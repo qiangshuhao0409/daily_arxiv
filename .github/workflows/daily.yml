@@ -1,20 +1,19 @@
+# 文件路径: .github/workflows/daily.yaml
+
 name: Run Daily Arxiv
 
 on:
+  # 允许你从 Actions 页面手动触发
   workflow_dispatch:
+  # 定时触发，每天 UTC 时间 12:00 运行
   schedule:
-    - cron: "00 12 * * *"
-  push:
-    branches:
-      - main
+    - cron: "0 12 * * *"
+  # 移除了 on:push 触发器，以防止无限循环
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+# 定义一些全局环境变量，方便后面使用
 env:
-  GITHUB_NAME: github-actions[bot]
-  GITHUB_EMAIL: github-actions[bot]@users.noreply.github.com
+  GITHUB_NAME: "github-actions[bot]"
+  GITHUB_EMAIL: "github-actions[bot]@users.noreply.github.com"
 
 jobs:
   sync:
@@ -26,12 +25,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # fetch-depth: 0 会获取所有历史记录，这对于 git push 是必要的
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.9" # 建议使用 3.9 或更高版本
           cache: 'pip'
           cache-dependency-path: 'requirements.txt'
 
@@ -40,22 +40,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily arxiv
-        id: daily-arxiv
+      # 修正 1：添加了 env 部分，将 secrets 传递给 Python 脚本
+      - name: Run daily arxiv script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          KEYWORDS: ${{ secrets.KEYWORDS }}
         run: python daily_arxiv.py
-        continue-on-error: false
 
+      # 修正 2：使用简单的 run 命令和 shell 脚本来提交和推送，而不是有问题的 github-script
       - name: Commit and push changes
-        if: success()
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.G_T }}
-          script: |
-            const fs = require('fs');
-            
-            await exec.exec('git', ['config', '--global', 'user.name', process.env.GITHUB_NAME]);
-            await exec.exec('git', ['config', '--global', 'user.email', process.env.GITHUB_EMAIL]);
-            
-            await exec.exec('git', ['add', 'README.md', 'daily.json', 'archives']);
-            await exec.exec('git', ['commit', '-m', 'update today arxiv']);
-            await exec.exec('git', ['push']);
+        run: |
+          # 配置 Git 的用户名和邮箱
+          git config --global user.name "${{ env.GITHUB_NAME }}"
+          git config --global user.email "${{ env.GITHUB_EMAIL }}"
+          
+          # 添加所有需要提交的文件
+          # 使用 `git status` 可以查看哪些文件被修改了，这行是可选的调试命令
+          # git status
+          git add README.md daily.json archives/
+          
+          # 提交变动。如果没有任何变动，`git commit`会失败，我们用 `|| echo "..."` 来防止工作流因此中断
+          git commit -m "Update daily arXiv papers" || echo "No changes to commit"
+          
+          # 将变动推送到 main 分支
+          git push
